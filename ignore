@@ -1,1 +1,125 @@
-..
+import time
+import random
+import sys
+sys.path.append('../')
+
+from Common_Libraries.p3b_lib import *
+from Common_Libraries.repeating_timer_lib import repeating_timer
+
+### Constants
+ROBOT_SPEED = 0.2
+ULTRASONIC_THRESHOLD = 0.1
+MAX_ALLOWED_WEIGHT = 90
+
+### Initialize Devices
+my_table = servo_table()
+qarm_device = qarm()
+qarm_device.home()
+qbot_device = qbot(ROBOT_SPEED)
+
+# ------------------------ Utility Functions ------------------------
+
+def refresh_simulation():
+    """Pings the simulation environment to update it."""
+    try:
+        my_table.ping()
+    except Exception as sim_error:
+        print(sim_error)
+
+def spawn_container():
+    """Randomly selects and dispenses a container."""
+    container_id = random.randint(1, 6)
+    container_info = my_table.container_properties(container_id)
+    my_table.dispense_container()
+    return container_info
+
+def move_container(bottle_position):
+    """Move the container from table to hopper based on its load position."""
+    pickup_positions = [
+        (-0.0956, -0.3567, 0.4107),
+        (0.0, -0.3926, 0.3774),
+        (0.1016, -0.3792, 0.3774)
+    ]
+    
+    qarm_device.move_arm(0.644, 0.0, 0.2733)
+    qarm_device.control_gripper(45)
+    qarm_device.move_arm(0.4064, 0.0, 0.4826)
+    qarm_device.move_arm(*pickup_positions[bottle_position-1])
+    qarm_device.control_gripper(-25)
+    qarm_device.move_arm(0.0, -0.2874, 0.77)
+    qarm_device.home()
+
+# ------------------------ Core Functions ------------------------
+
+def collect_containers(cycle_count):
+    """Collects multiple containers until weight and bin type constraints are met."""
+    total_weight = 0
+    assigned_bin = None
+
+    qbot_device.forward_time(9.9 if cycle_count == 0 else 0.7)
+
+    for idx in range(1, 4):
+        container = spawn_container()
+        material, weight, bin_num = container
+
+        print(f"Container: {material} | {weight}g | Bin {bin_num}")
+
+        if idx == 1:
+            assigned_bin = bin_num
+
+        if bin_num != assigned_bin:
+            print("Incompatible bin detected. Skipping...")
+            break
+        if total_weight + weight > MAX_ALLOWED_WEIGHT:
+            print("Exceeded maximum load capacity. Skipping...")
+            break
+
+        move_container(idx)
+        total_weight += weight
+
+    return assigned_bin
+
+def drive_to_bin(target_bin):
+    """Navigate along the line until reaching the target bin."""
+    qbot_device.rotate(180)
+    time.sleep(2)
+    qbot_device.activate_ultrasonic_sensor()
+
+    while qbot_device.read_ultrasonic_sensor(target_bin) > ULTRASONIC_THRESHOLD:
+        off_track, speed = qbot_device.follow_line(0.1)
+        qbot_device.forward_velocity(speed)
+    
+    qbot_device.stop()
+    qbot_device.deactivate_ultrasonic_sensor()
+    print(f"Reached bin {target_bin}.")
+
+def empty_hopper():
+    """Dump the containers into the designated bin."""
+    time.sleep(2)
+    qbot_device.activate_actuator()
+    qbot_device.dump()
+
+def return_to_start():
+    """Follow the line to return back to the starting point."""
+    while True:
+        off_track, move_speed = qbot_device.follow_line(0.1)
+        qbot_device.forward_velocity(move_speed)
+        if off_track >= 2:
+            break
+    qbot_device.stop()
+    qarm_device.home()
+
+# ------------------------ Main Execution ------------------------
+
+def main_sequence():
+    scan_cycle = 0
+    while True:
+        bin_target = collect_containers(scan_cycle)
+        drive_to_bin(bin_target)
+        empty_hopper()
+        my_table.rotate_table_angle(45)
+        return_to_start()
+        scan_cycle += 1
+
+if __name__ == "__main__":
+    main_sequence()
