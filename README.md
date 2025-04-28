@@ -41,4 +41,3 @@ This project features the design and development of an automated recycling syste
 ---
 
 > Developed by Viha Tripathi  
-> Course: Electronic Devices and Circuits I — McMaster University (Winter 2025)
